@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4a90d9"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="film" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff"/>
+      <stop offset="100%" stop-color="#c8d6e5"/>
+    </linearGradient>
+  </defs>
+  <!-- 背景圆角矩形 -->
+  <rect x="0" y="0" width="256" height="256" rx="48" fill="url(#bg)"/>
+  <!-- 胶片边框 -->
+  <rect x="48" y="56" width="160" height="144" rx="12" fill="none" stroke="url(#film)" stroke-width="4"/>
+  <!-- 胶片齿孔 - 左 -->
+  <rect x="44" y="76" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="44" y="104" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="44" y="132" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="44" y="160" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <!-- 胶片齿孔 - 右 -->
+  <rect x="204" y="76" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="204" y="104" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="204" y="132" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <rect x="204" y="160" width="8" height="12" rx="2" fill="#fff" opacity="0.9"/>
+  <!-- 播放三角 -->
+  <polygon points="110,96 110,160 162,128" fill="#4a90d9" opacity="0.95"/>
+  <!-- 剪刀图标 -->
+  <g transform="translate(176, 72)" fill="#fff" opacity="0.85">
+    <circle cx="0" cy="0" r="10" fill="none" stroke="#fff" stroke-width="3"/>
+    <circle cx="0" cy="24" r="10" fill="none" stroke="#fff" stroke-width="3"/>
+    <line x1="-3" y1="6" x2="-3" y2="18" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+    <line x1="3" y1="6" x2="3" y2="18" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <!-- 字幕线条 -->
+  <g transform="translate(120, 184)" fill="#fff" opacity="0.7">
+    <rect x="0" y="0" width="24" height="4" rx="2"/>
+    <rect x="28" y="0" width="28" height="4" rx="2"/>
+    <rect x="60" y="0" width="20" height="4" rx="2"/>
+    <rect x="0" y="10" width="40" height="4" rx="2"/>
+    <rect x="44" y="10" width="16" height="4" rx="2"/>
+  </g>
+</svg>

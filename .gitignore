@@ -1,0 +1,42 @@
+# 构建产物
+dist/
+build/
+frontend/dist/
+backend/app/static/
+
+# 分析产生的临时文件
+ai_prompts.txt
+ai_prompts_clean.txt
+ecutauto_prompts.txt
+
+# 打包的二进制资源（太大，另一个 git 管理或用脚本下载）
+backend/resources/ffmpeg/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Node
+node_modules/
+
+# 环境
+.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak
+*.log
+
+# PyInstaller
+*.spec.bak
