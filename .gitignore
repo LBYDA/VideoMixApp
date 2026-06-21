@@ -4,10 +4,8 @@ build/
 frontend/dist/
 backend/app/static/
 
-# 分析产生的临时文件
-ai_prompts.txt
-ai_prompts_clean.txt
-ecutauto_prompts.txt
+# 一次性分析脚本
+scripts/extract_*.py
 
 # 打包的二进制资源（太大，另一个 git 管理或用脚本下载）
 backend/resources/ffmpeg/

@@ -109,8 +109,18 @@ def main():
     t = threading.Thread(target=_run_uvicorn, args=(port,), daemon=True)
     t.start()
 
+    # 等待端口就绪
+    import socket
+    for _ in range(30):
+        time.sleep(0.5)
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=1)
+            s.close()
+            break
+        except (ConnectionRefusedError, OSError):
+            pass
+
     import webbrowser
-    time.sleep(1)
     webbrowser.open(url)
     t.join()
 
