@@ -285,16 +285,23 @@ function cancelMix() {
 .selected-files {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
   margin-top: 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px;
 }
 
 .tag {
-  padding: 4px 10px;
+  padding: 3px 8px;
   background: rgba(74, 144, 217, 0.1);
   color: var(--accent);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .output-grid {
@@ -351,8 +358,40 @@ function cancelMix() {
 
 .btn-lg { padding: 12px 32px; font-size: 16px; }
 
-.plan-table { font-size: 13px; }
+.plan-table {
+  font-size: 13px;
+  max-height: 300px;
+  overflow-y: auto;
+}
 .plan-row { display: grid; grid-template-columns: 30px 1fr 60px 60px 60px 100px; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); align-items: center; }
 .plan-header { font-weight: 600; color: var(--text-secondary); font-size: 12px; }
 .file-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.path-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.path-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.path-input:focus {
+  border-color: var(--accent);
+}
+
+.scan-result {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--success);
+  font-weight: 600;
+}
 </style>

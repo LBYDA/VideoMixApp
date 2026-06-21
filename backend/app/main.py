@@ -4,14 +4,19 @@ import threading
 import time
 from pathlib import Path
 
+# 确保 backend 目录在 sys.path
+_backend_dir = str(Path(__file__).parent.parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .api import files, category_mix, ai_mix, video_mix, settings, ws_progress, jobs
-from .config import get_config
-from .models.schemas import HealthResponse
+from app.api import files, category_mix, ai_mix, video_mix, settings, ws_progress, jobs
+from app.config import get_config
+from app.models.schemas import HealthResponse
 
 app = FastAPI(
     title="VideoMixApp",
@@ -47,28 +52,20 @@ async def health():
 
 
 def _copy_frontend_dist_if_needed():
-    """将前端构建产物复制到 backend 的 static 目录"""
-    # PyInstaller 打包时静态文件通过 --add-data 注入
-    if getattr(sys, 'frozen', False):
-        return
-
-    project_root = Path(__file__).parent.parent.parent  # backend/.. → video-mix-app/
+    project_root = Path(_backend_dir)
     frontend_dist = project_root / "frontend" / "dist"
     target = Path(__file__).parent / "static"
 
     if frontend_dist.exists() and (frontend_dist / "index.html").exists():
         if not target.exists() or not (target / "index.html").exists():
             import shutil
-            print(f"[sync] 同步前端构建文件: {frontend_dist} → {target}")
             shutil.rmtree(target, ignore_errors=True)
             shutil.copytree(frontend_dist, target)
 
 
-# 挂载前端静态文件
 _copy_frontend_dist_if_needed()
 static_dir = Path(__file__).parent / "static"
-HAS_STATIC = static_dir.exists() and (static_dir / "index.html").exists()
-if HAS_STATIC:
+if static_dir.exists() and (static_dir / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
 
@@ -77,46 +74,16 @@ def _run_uvicorn(port: int):
 
 
 def main():
-    """入口：启动 FastAPI + 打开浏览器"""
     port = 51234
     url = f"http://127.0.0.1:{port}"
 
-    # 启动 FastAPI 后台
     t = threading.Thread(target=_run_uvicorn, args=(port,), daemon=True)
     t.start()
 
-    # 打开浏览器
     import webbrowser
     time.sleep(1)
     webbrowser.open(url)
     t.join()
-
-
-def _try_pywebview(url: str) -> bool:
-    try:
-        import webview
-
-        # 等 FastAPI 就绪
-        time.sleep(1.5)
-
-        webview.create_window(
-            "视频混剪工具",
-            url,
-            width=1280,
-            height=800,
-            min_size=(900, 600),
-            resizable=True,
-        )
-        webview.start()
-
-        os._exit(0)
-        return True
-
-    except ImportError:
-        return False
-    except Exception as e:
-        print(f"[warn] pywebview 启动失败: {e}")
-        return False
 
 
 if __name__ == "__main__":
