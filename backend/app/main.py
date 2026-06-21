@@ -77,7 +77,7 @@ def _run_uvicorn(port: int):
 
 
 def main():
-    """入口：pywebview 原生窗口 > 浏览器回退"""
+    """入口：启动 FastAPI + 打开浏览器"""
     port = 51234
     url = f"http://127.0.0.1:{port}"
 
@@ -85,12 +85,7 @@ def main():
     t = threading.Thread(target=_run_uvicorn, args=(port,), daemon=True)
     t.start()
 
-    # 尝试 pywebview 原生窗口
-    if _try_pywebview(url):
-        return
-
-    # 回退：浏览器
-    print("[info] pywebview 不可用，打开浏览器...")
+    # 打开浏览器
     import webbrowser
     time.sleep(1)
     webbrowser.open(url)

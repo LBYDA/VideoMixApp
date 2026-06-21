@@ -183,15 +183,7 @@ async function scanDir(idx: number) {
   try {
     const { data } = await axios.get('/api/files/scan', { params: { path: g.source_dir } })
     g._fileCount = data.count
-    // 逐个探针获取时长
-    let dur = 0
-    for (const v of data.videos) {
-      try {
-        const { data: probe } = await axios.get('/api/files/probe', { params: { path: v.path } })
-        dur += probe.duration || 0
-      } catch {}
-    }
-    g._totalDur = dur
+    g._totalDur = 0
   } catch (e: any) {
     g._fileCount = 0
     g._totalDur = 0
