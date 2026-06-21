@@ -17,11 +17,21 @@
 
           <div class="group-body">
             <label>素材目录</label>
-            <FilePicker
-              v-model="group.source_dir"
-              :label="'选择文件夹'"
-              :folders-only="true"
-            />
+            <div class="path-input-row">
+              <input
+                v-model="group.source_dir"
+                class="path-input"
+                placeholder="输入文件夹路径，如 D:\素材\壮根产品"
+                @input="onPathInput(i)"
+              />
+              <button class="btn" @click="scanDir(i)" :disabled="!group.source_dir">
+                {{ group._loading ? '扫描中...' : '扫描' }}
+              </button>
+            </div>
+            <div class="scan-result" v-if="group._fileCount !== undefined && !group._loading">
+              <span class="scan-count">{{ group._fileCount }} 个视频</span>
+              <span class="scan-total-dur" v-if="group._totalDur > 0">总时长 {{ formatDur(group._totalDur) }}</span>
+            </div>
 
             <div class="group-params">
               <div class="param">
@@ -64,12 +74,8 @@
           </select>
         </div>
         <div class="param">
-          <label>输出路径</label>
-          <FilePicker
-            v-model="outputDir"
-            :label="'选择输出目录'"
-            :folders-only="true"
-          />
+          <label>输出目录</label>
+          <input v-model="outputDir" class="path-input" placeholder="如 D:\输出" />
         </div>
       </div>
     </div>
@@ -100,14 +106,25 @@ import { ref, reactive, computed, watch } from 'vue'
 import axios from 'axios'
 import { useSettingsStore } from '@/stores/settings'
 import { useProgressStore } from '@/stores/progress'
-import FilePicker from '@/components/common/FilePicker.vue'
 import ProgressBar from '@/components/common/ProgressBar.vue'
-import type { CategoryGroup, JobProgress } from '@/types/api'
+import type { JobProgress } from '@/types/api'
 
 const settings = useSettingsStore()
 const progressStore = useProgressStore()
 
-const groups = reactive<CategoryGroup[]>([
+interface GroupExt extends Record<string, any> {
+  name: string
+  source_dir: string
+  max_clip_duration: number
+  min_clip_duration: number
+  scene_threshold: number
+  priority: number
+  _fileCount?: number
+  _totalDur?: number
+  _loading?: boolean
+}
+
+const groups = reactive<GroupExt[]>([
   {
     name: '分类组1',
     source_dir: '',
@@ -115,6 +132,9 @@ const groups = reactive<CategoryGroup[]>([
     min_clip_duration: 2,
     scene_threshold: 0.3,
     priority: 0,
+    _fileCount: undefined,
+    _totalDur: 0,
+    _loading: false,
   },
 ])
 
@@ -134,11 +154,51 @@ function addGroup() {
     min_clip_duration: 2,
     scene_threshold: 0.3,
     priority: 0,
+    _fileCount: undefined,
+    _totalDur: 0,
+    _loading: false,
   })
 }
 
 function removeGroup(index: number) {
   groups.splice(index, 1)
+}
+
+function formatDur(sec: number) {
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return m > 0 ? `${m}分${s}秒` : `${s}秒`
+}
+
+function onPathInput(idx: number) {
+  // 用户修改路径后清除之前扫描结果
+  groups[idx]._fileCount = undefined
+  groups[idx]._totalDur = 0
+}
+
+async function scanDir(idx: number) {
+  const g = groups[idx]
+  if (!g.source_dir) return
+  g._loading = true
+  try {
+    const { data } = await axios.get('/api/files/scan', { params: { path: g.source_dir } })
+    g._fileCount = data.count
+    // 逐个探针获取时长
+    let dur = 0
+    for (const v of data.videos) {
+      try {
+        const { data: probe } = await axios.get('/api/files/probe', { params: { path: v.path } })
+        dur += probe.duration || 0
+      } catch {}
+    }
+    g._totalDur = dur
+  } catch (e: any) {
+    g._fileCount = 0
+    g._totalDur = 0
+    alert('扫描失败: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    g._loading = false
+  }
 }
 
 async function startMix() {
@@ -273,6 +333,43 @@ function cancelMix() {
   color: var(--text-secondary);
   display: block;
   margin-bottom: 6px;
+}
+
+.path-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.path-input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.path-input:focus {
+  border-color: var(--accent);
+}
+
+.scan-result {
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+}
+
+.scan-count {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.scan-total-dur {
+  color: var(--text-secondary);
 }
 
 .group-params {

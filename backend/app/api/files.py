@@ -82,6 +82,37 @@ async def probe_video(path: str = Query(...)):
     )
 
 
+@router.get("/scan")
+async def scan_videos(path: str = Query(...)):
+    """快速扫描文件夹中所有视频文件（递归）"""
+    target = Path(path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="路径不存在")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="不是有效文件夹")
+
+    videos = []
+    try:
+        for item in target.rglob("*"):
+            if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS and not item.name.startswith("."):
+                try:
+                    stat = item.stat()
+                    videos.append({
+                        "path": str(item),
+                        "name": item.name,
+                        "size": stat.st_size,
+                        "parent": str(item.parent),
+                    })
+                except OSError:
+                    pass
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="没有访问权限")
+
+    # 按路径排序
+    videos.sort(key=lambda v: v["path"].lower())
+    return {"videos": videos, "count": len(videos)}
+
+
 @router.get("/thumbnail")
 async def get_thumbnail(path: str = Query(...), time: float = Query(default=0)):
     """获取视频缩略图"""

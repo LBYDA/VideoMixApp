@@ -13,7 +13,7 @@
           <div class="track-body">
             <div class="param">
               <label>视频文件</label>
-              <FilePicker v-model="track.file_path" label="选择视频" />
+              <input v-model="track.file_path" class="path-input" placeholder="输入视频文件路径" />
             </div>
             <div class="track-row">
               <div class="param">
@@ -82,7 +82,7 @@
         </div>
         <div class="param">
           <label>输出路径</label>
-          <FilePicker v-model="outputDir" label="选择输出目录" :folders-only="true" />
+          <input v-model="outputDir" class="path-input" placeholder="如 D:\输出" />
         </div>
       </div>
     </div>
@@ -109,7 +109,7 @@ import { ref, reactive, watch } from 'vue'
 import axios from 'axios'
 import { useSettingsStore } from '@/stores/settings'
 import { useProgressStore } from '@/stores/progress'
-import FilePicker from '@/components/common/FilePicker.vue'
+
 import ProgressBar from '@/components/common/ProgressBar.vue'
 import type { VideoTrack, JobProgress } from '@/types/api'
 

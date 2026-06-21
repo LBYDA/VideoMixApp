@@ -12,12 +12,20 @@
 
     <div class="page-section">
       <h3>素材选择</h3>
-      <p class="section-hint">选择要用作混剪素材的视频文件（可多选）</p>
-      <FilePicker
-        v-model="videoPaths"
-        :label="'选择视频文件'"
-        :multiple="true"
-      />
+      <p class="section-hint">输入视频或素材文件夹路径</p>
+      <div class="path-input-row">
+        <input
+          v-model="videoPathInput"
+          class="path-input"
+          placeholder="输入文件夹或视频文件路径，多个用逗号分隔"
+        />
+        <button class="btn" @click="scanVideos" :disabled="scanLoading">
+          {{ scanLoading ? '扫描中...' : '扫描' }}
+        </button>
+      </div>
+      <div class="scan-result" v-if="scanSummary">
+        {{ scanSummary }}
+      </div>
       <div class="selected-files" v-if="videoPaths.length > 0">
         <span class="tag" v-for="fp in videoPaths" :key="fp">{{ getFileName(fp) }}</span>
       </div>
@@ -41,12 +49,8 @@
           <span class="mode-hint">{{ modeHint }}</span>
         </div>
         <div class="param">
-          <label>输出路径</label>
-          <FilePicker
-            v-model="outputDir"
-            :label="'选择输出目录'"
-            :folders-only="true"
-          />
+          <label>输出目录</label>
+          <input v-model="outputDir" class="path-input" placeholder="如 D:\输出" />
         </div>
       </div>
     </div>
@@ -101,7 +105,6 @@ import { ref, computed, watch } from 'vue'
 import axios from 'axios'
 import { useSettingsStore } from '@/stores/settings'
 import { useProgressStore } from '@/stores/progress'
-import FilePicker from '@/components/common/FilePicker.vue'
 import ProgressBar from '@/components/common/ProgressBar.vue'
 import type { AiClipPlan, JobProgress } from '@/types/api'
 
@@ -109,7 +112,10 @@ const settings = useSettingsStore()
 const progressStore = useProgressStore()
 
 const copyText = ref('')
+const videoPathInput = ref('')
 const videoPaths = ref<string[]>([])
+const scanLoading = ref(false)
+const scanSummary = ref('')
 const targetDuration = ref(45)
 const style = ref('marketing')
 const outputDir = ref(settings.output_dir)
@@ -137,6 +143,39 @@ function onModeChange() {
 
 function getFileName(path: string) {
   return path.split('/').pop()?.split('\\').pop() || path
+}
+
+async function scanVideos() {
+  const raw = videoPathInput.value.trim()
+  if (!raw) return
+
+  scanLoading.value = true
+  scanSummary.value = ''
+  videoPaths.value = []
+
+  const parts = raw.split(/[,;，；]/).map(s => s.trim()).filter(Boolean)
+  const found: string[] = []
+
+  for (const p of parts) {
+    try {
+      const { data } = await axios.get('/api/files/scan', { params: { path: p } })
+      if (data.count > 0) {
+        for (const v of data.videos) {
+          found.push(v.path)
+        }
+      } else {
+        // 可能是个体文件
+        found.push(p)
+      }
+    } catch {
+      // 当文件处理
+      found.push(p)
+    }
+  }
+
+  videoPaths.value = [...new Set(found)]
+  scanSummary.value = `找到 ${videoPaths.value.length} 个视频文件`
+  scanLoading.value = false
 }
 
 async function generatePlan() {
