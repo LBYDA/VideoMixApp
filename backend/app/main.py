@@ -102,6 +102,24 @@ def _run_uvicorn(port: int):
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 
+def _find_edge() -> Optional[str]:
+    """查找 Edge 浏览器路径"""
+    import shutil
+    # 先查系统PATH
+    edge = shutil.which("msedge")
+    if edge:
+        return edge
+    # 常见安装位置
+    paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for p in paths:
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def main():
     port = 51234
 
@@ -119,18 +137,22 @@ def main():
         except (ConnectionRefusedError, OSError):
             pass
 
-    # 优先 pywebview 原生窗口，回退浏览器
     url = f"http://127.0.0.1:{port}"
-    try:
-        import webview
-        webview.create_window("视频混剪工具", url, width=1280, height=800, min_size=(900, 600))
-        webview.start()
-        os._exit(0)
-    except Exception:
-        pass
 
-    import webbrowser
-    webbrowser.open(url)
+    # 尝试 Edge --app 独立窗口模式
+    import subprocess
+    edge = _find_edge()
+    if edge:
+        try:
+            subprocess.Popen([edge, f"--app={url}"],
+                             creationflags=0x08000000 if sys.platform == "win32" else 0)  # CREATE_NO_WINDOW
+        except Exception:
+            import webbrowser
+            webbrowser.open(url)
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
     t.join()
 
 

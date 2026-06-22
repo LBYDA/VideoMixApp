@@ -42,7 +42,6 @@ a = Analysis(
         'fastapi', 'pydantic', 'pydantic_settings',
         'aiofiles', 'httpx',
         'encodings.idna',
-        'webview', 'clr_loader',
     ],
     hookspath=[],
     hooksconfig={},
