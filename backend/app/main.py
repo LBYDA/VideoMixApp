@@ -104,7 +104,6 @@ def _run_uvicorn(port: int):
 
 def main():
     port = 51234
-    url = f"http://127.0.0.1:{port}"
 
     t = threading.Thread(target=_run_uvicorn, args=(port,), daemon=True)
     t.start()
@@ -120,8 +119,19 @@ def main():
         except (ConnectionRefusedError, OSError):
             pass
 
+    # pywebview 原生窗口
+    try:
+        import webview
+        webview.create_window("视频混剪工具", f"http://127.0.0.1:{port}",
+                              width=1280, height=800, min_size=(900, 600))
+        webview.start()
+        os._exit(0)
+    except ImportError:
+        pass
+
+    # 回退浏览器
     import webbrowser
-    webbrowser.open(url)
+    webbrowser.open(f"http://127.0.0.1:{port}")
     t.join()
 
 

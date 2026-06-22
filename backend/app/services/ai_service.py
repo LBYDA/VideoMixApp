@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -18,7 +20,7 @@ from .prompts import MIX_PROMPTS, MODE_LABELS
 
 
 class AiMixService:
-    """AI智能混剪服务 — 使用 ECutAuto 原始 Prompt"""
+    """AI智能混剪服务"""
 
     def __init__(self):
         cfg = get_config()
@@ -28,33 +30,24 @@ class AiMixService:
         )
         self.temp = TempFileManager(cfg.workspace_dir)
 
-    # ─── ASR ───
+    # ═══════ ASR ═══════
 
     async def run_asr(self, video_paths: list[str], job_id: str) -> list[dict]:
-        """对视频列表执行ASR，返回带序号的字幕片段"""
         cfg = get_config()
         results = []
 
         for i, vp in enumerate(video_paths):
-            await broadcast_progress(job_id, "log", {
-                "level": "info",
-                "message": f"ASR转写: {Path(vp).name} ({i+1}/{len(video_paths)})"
-            })
-
+            await self._log(job_id, "info", f"ASR 转写: {Path(vp).name} ({i+1}/{len(video_paths)})")
             segments = await self._transcribe(vp, cfg)
-            file_name = Path(vp).name
             results.append({
-                "file": file_name,
+                "file": Path(vp).name,
                 "file_path": vp,
                 "segments": segments,
             })
-
         return results
 
     async def _transcribe(self, video_path: str, cfg) -> list[dict]:
-        """使用 faster-whisper 转写单个视频"""
         audio_path = self.temp.get_temp_path(f"asr_{os.urandom(4).hex()}.wav")
-
         try:
             result = await self.executor.extract_audio(video_path, audio_path)
             if result.returncode != 0:
@@ -62,25 +55,20 @@ class AiMixService:
 
             try:
                 from faster_whisper import WhisperModel
-
                 model = WhisperModel(cfg.asr_model_size, device="cpu", compute_type="int8")
-                segments_list = []
-                segments_gen, info = model.transcribe(audio_path, language=cfg.asr_language, beam_size=5)
-
-                for seg in segments_gen:
-                    segments_list.append({
-                        "index": len(segments_list),  # 片段序号（0-based）
-                        "start": round(seg.start, 2),
-                        "end": round(seg.end, 2),
-                        "text": seg.text.strip(),
-                        "duration": round(seg.end - seg.start, 2),
+                segs = []
+                gen, _ = model.transcribe(audio_path, language=cfg.asr_language, beam_size=5)
+                for s in gen:
+                    segs.append({
+                        "index": len(segs),
+                        "start": round(s.start, 2),
+                        "end": round(s.end, 2),
+                        "text": s.text.strip(),
+                        "duration": round(s.end - s.start, 2),
                     })
-
-                return segments_list
-
+                return segs
             except ImportError:
                 return []
-
         except Exception:
             return []
         finally:
@@ -89,254 +77,279 @@ class AiMixService:
             except OSError:
                 pass
 
-    # ─── 构建文案表 ───
+    # ═══════ 文案表 ═══════
 
     def _build_copy_table(self, video_subtitles: list[dict]) -> str:
-        """将字幕转换为 ECutAuto 风格的文案表（每行包含序号、文本、时长）"""
         lines = []
-        global_idx = 0
-
+        idx = 0
         for vid in video_subtitles:
-            file_name = vid.get("file", "unknown")
-            lines.append(f"\n# 来源: {file_name}")
+            lines.append(f"\n# 来源: {vid.get('file', 'unknown')}")
             for seg in vid.get("segments", []):
                 text = seg.get("text", "")
-                duration = seg.get("duration", round(seg.get("end", 0) - seg.get("start", 0), 2))
-                lines.append(f"[{global_idx}] {text} ({duration}s)")
-                global_idx += 1
-
+                dur = seg.get("duration", round(seg.get("end", 0) - seg.get("start", 0), 2))
+                lines.append(f"[{idx}] {text} ({dur}s)")
+                idx += 1
         return "\n".join(lines)
 
-    # ─── LLM 生成混剪方案 ───
+    # ═══════ LLM 方案生成 (带重试) ═══════
 
     async def generate_plan(self, input_data: AiMixInput, video_subtitles: list[dict], job_id: str) -> Optional[AiClipPlan]:
-        """调用 LLM 使用 ECutAuto 原始 Prompt 生成混剪方案"""
         cfg = get_config()
-
-        # 构建文案表
         copy_table = self._build_copy_table(video_subtitles)
 
-        # 选取对应的 Prompt（优先用户自定义）
-        cfg2 = get_config()
         custom_key = f"custom_prompt_{input_data.style}"
-        custom = getattr(cfg2, custom_key, "")
-        if custom and custom.strip():
-            system_prompt = custom.strip()
-            await broadcast_progress(job_id, "log", {
-                "level": "info",
-                "message": "使用自定义 Prompt"
-            })
-        else:
-            system_prompt = MIX_PROMPTS.get(input_data.style, MIX_PROMPTS["general"])
+        custom = getattr(cfg, custom_key, "").strip()
+        system_prompt = custom if custom else MIX_PROMPTS.get(input_data.style, MIX_PROMPTS["general"])
 
-        # 构建用户消息
         user_msg = (
             f"目标时长: 每组 {input_data.target_duration} 秒\n"
             f"输出组数: 1 组\n\n"
             f"{copy_table}"
         )
 
-        await broadcast_progress(job_id, "log", {
-            "level": "info",
-            "message": f"使用 Prompt 模式: {MODE_LABELS.get(input_data.style, input_data.style)}"
-        })
+        await self._log(job_id, "info", f"模式: {MODE_LABELS.get(input_data.style, input_data.style)}")
 
         if not cfg.llm_api_key:
-            return self._generate_fallback_plan(input_data, video_subtitles)
+            await self._log(job_id, "info", "未配置 LLM API Key，使用本地备用方案")
+            return self._fallback_plan(input_data, video_subtitles)
 
-        try:
-            async with httpx.AsyncClient(timeout=180) as client:
-                resp = await client.post(
-                    f"{cfg.llm_api_base}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {cfg.llm_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": cfg.llm_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        "max_tokens": cfg.llm_max_tokens,
-                        "temperature": 0.7,
-                    },
-                )
+        # 最多重试 3 次
+        for attempt in range(3):
+            try:
+                content = await self._call_llm(cfg, system_prompt, user_msg, job_id, attempt)
+                if not content:
+                    continue
 
-                if resp.status_code != 200:
-                    error_body = resp.text[:300]
-                    await broadcast_progress(job_id, "log", {
-                        "level": "warn",
-                        "message": f"LLM调用失败 (HTTP {resp.status_code}): {error_body}"
-                    })
-                    return self._generate_fallback_plan(input_data, video_subtitles)
-
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-
-                # 解析 LLM 返回的 JSON（groups 格式）
-                plan = self._parse_llm_response(content, video_subtitles, input_data.target_duration)
-
+                plan = self._parse_llm_response(content, video_subtitles)
                 if plan and plan.segments:
-                    await broadcast_progress(job_id, "log", {
-                        "level": "info",
-                        "message": f"LLM 生成方案: {len(plan.segments)} 个片段, 总时长 {plan.total_duration:.1f}s"
-                    })
+                    await self._log(job_id, "info", f"方案生成成功: {len(plan.segments)} 片段, {plan.total_duration:.1f}s")
                     return plan
 
-        except Exception as e:
-            await broadcast_progress(job_id, "log", {
-                "level": "warn",
-                "message": f"LLM调用失败，使用备用方案: {e}"
-            })
+                await self._log(job_id, "warn", f"LLM 返回格式错误 (尝试 {attempt+1}/3)，正在重试...")
+            except Exception as e:
+                await self._log(job_id, "warn", f"LLM 调用失败 (尝试 {attempt+1}/3): {e}")
 
-        return self._generate_fallback_plan(input_data, video_subtitles)
+        await self._log(job_id, "info", "LLM 多次失败，使用本地备用方案")
+        return self._fallback_plan(input_data, video_subtitles)
 
-    def _parse_llm_response(self, content: str, video_subtitles: list[dict], target_duration: float) -> Optional[AiClipPlan]:
-        """解析 LLM 返回的 JSON（groups 格式或直接的 segments 格式）"""
-        # 构建片段索引映射表
-        index_map: list[tuple[str, float, float]] = []  # (file_path, start, end)
-        for vid in video_subtitles:
-            file_path = vid.get("file_path", "")
-            for seg in vid.get("segments", []):
-                index_map.append((file_path, seg.get("start", 0), seg.get("end", 0)))
+    async def _call_llm(self, cfg, system_prompt: str, user_msg: str, job_id: str, attempt: int) -> Optional[str]:
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(
+                f"{cfg.llm_api_base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {cfg.llm_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": cfg.llm_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "max_tokens": cfg.llm_max_tokens,
+                    "temperature": cfg.llm_temperature,
+                    "response_format": {"type": "json_object"},  # 强制 JSON 输出
+                },
+            )
 
-        try:
-            # 提取 JSON
-            json_match = re.search(r'\{[\s\S]*\}', content)
-            if not json_match:
+            if resp.status_code != 200:
+                await self._log(job_id, "warn", f"HTTP {resp.status_code}: {resp.text[:200]}")
                 return None
 
-            plan_data = json.loads(json_match.group())
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
 
-            # groups 格式 (ECutAuto 原生格式)
+    def _parse_llm_response(self, content: str, video_subtitles: list[dict]) -> Optional[AiClipPlan]:
+        index_map: list[tuple[str, float, float]] = []
+        for vid in video_subtitles:
+            for seg in vid.get("segments", []):
+                index_map.append((vid.get("file_path", ""), seg.get("start", 0), seg.get("end", 0)))
+
+        try:
+            plan_data = self._extract_json(content)
+            if not plan_data:
+                return None
+
             if "groups" in plan_data:
-                segments = []
-                total_dur = 0.0
-                for group in plan_data.get("groups", []):
-                    indices = group.get("indices", [])
-                    for idx in indices:
+                segs = []
+                dur = 0.0
+                for g in plan_data["groups"]:
+                    for idx in g.get("indices", []):
                         if 0 <= idx < len(index_map):
-                            fp, start, end = index_map[idx]
-                            dur = end - start
-                            segments.append(ClipSegment(
-                                source_file=fp,
-                                start_time=start,
-                                end_time=end,
-                            ))
-                            total_dur += dur
+                            fp, s, e = index_map[idx]
+                            segs.append(ClipSegment(source_file=fp, start_time=s, end_time=e))
+                            dur += e - s
+                if segs:
+                    return AiClipPlan(segments=segs, total_duration=round(dur, 1))
 
-                if segments:
-                    return AiClipPlan(segments=segments, total_duration=round(total_dur, 1))
-
-            # 直接的 segments 格式（旧格式兼容）
             if "segments" in plan_data:
-                segments = []
-                total_dur = 0.0
+                segs = []
+                dur = 0.0
                 for seg in plan_data["segments"]:
-                    dur = float(seg.get("end_time", 0)) - float(seg.get("start_time", 0))
-                    if dur > 0:
-                        segments.append(ClipSegment(
-                            source_file=seg.get("source_file", ""),
+                    d = float(seg.get("end_time", 0)) - float(seg.get("start_time", 0))
+                    if d > 0:
+                        segs.append(ClipSegment(
+                            source_file=str(seg.get("source_file", "")),
                             start_time=float(seg.get("start_time", 0)),
                             end_time=float(seg.get("end_time", 0)),
-                            text_overlay=seg.get("text_overlay"),
-                            transition=seg.get("transition", "none"),
+                            text_overlay=str(seg.get("text_overlay", "")) if seg.get("text_overlay") else None,
+                            transition=str(seg.get("transition", "none")),
                         ))
-                        total_dur += dur
-
-                if segments:
-                    return AiClipPlan(segments=segments, total_duration=round(total_dur, 1))
-
-        except (json.JSONDecodeError, KeyError, TypeError):
+                        dur += d
+                if segs:
+                    return AiClipPlan(segments=segs, total_duration=round(dur, 1))
+        except Exception:
             pass
+        return None
+
+    @staticmethod
+    def _extract_json(content: str) -> Optional[dict]:
+        # 1. 直接解析
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. 正则提取 { ... }
+        m = re.search(r'\{[\s\S]*\}', content)
+        if m:
+            raw = m.group(0)
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
+            # 3. 修复常见 JSON 错误（尾部逗号、单引号等）
+            raw = re.sub(r',\s*}', '}', raw)
+            raw = re.sub(r',\s*]', ']', raw)
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                pass
 
         return None
 
-    def _generate_fallback_plan(self, input_data: AiMixInput, video_subtitles: list[dict]) -> AiClipPlan:
-        """无 LLM 时的备用方案：按时间顺序选取非噪声片段"""
+    def _fallback_plan(self, input_data: AiMixInput, video_subtitles: list[dict]) -> AiClipPlan:
         import random
         random.seed(42)
 
-        # 噪声关键词过滤
-        noise_patterns = [
-            "嗯", "啊", "那个", "好吧", "哎呀", "妈呀", "然后然后",
-            "扣1", "感谢灯牌", "小黄车", "321上链接", "1号链接",
-            "家人们", "兄弟们", "老铁们", "大家好我是",
-            "100%", "纯天然", "根治", "零风险",
-        ]
-
-        segments = []
-        remaining = input_data.target_duration
+        noise = {"嗯", "啊", "那个", "好吧", "哎呀", "妈呀", "然后然后",
+                  "扣1", "感谢灯牌", "小黄车", "321上链接", "1号链接",
+                  "家人们", "兄弟们", "老铁们", "100%", "纯天然", "根治"}
+        segs = []
+        remain = input_data.target_duration
         all_subs = []
 
         for vid in video_subtitles:
-            file_path = vid.get("file_path", "")
             for seg in vid.get("segments", []):
                 text = seg.get("text", "")
                 dur = seg.get("duration", seg.get("end", 0) - seg.get("start", 0))
-
-                # 过滤噪声
-                is_noise = any(p in text for p in noise_patterns)
-                if is_noise or dur < 1.0 or dur > 30.0:
+                if any(p in text for p in noise) or dur < 1.0 or dur > 30.0:
                     continue
-
-                all_subs.append((file_path, seg["start"], seg["end"], text, dur))
+                all_subs.append((vid.get("file_path", ""), seg["start"], seg["end"], text, dur))
 
         if not all_subs:
-            # 放宽过滤
             for vid in video_subtitles:
-                file_path = vid.get("file_path", "")
                 for seg in vid.get("segments", []):
                     dur = seg.get("duration", seg.get("end", 0) - seg.get("start", 0))
                     if dur > 0.5:
-                        all_subs.append((file_path, seg["start"], seg["end"], seg.get("text", ""), dur))
+                        all_subs.append((vid.get("file_path", ""), seg["start"], seg["end"], seg.get("text", ""), dur))
 
-        # 选择片段
-        all_subs.sort(key=lambda x: x[4], reverse=True)  # 优先选长的
+        all_subs.sort(key=lambda x: x[4], reverse=True)
         for src, start, end, text, dur in all_subs:
-            if remaining <= 0:
+            if remain <= 0:
                 break
-            take = min(dur, remaining)
-            segments.append(ClipSegment(
-                source_file=src,
-                start_time=start,
-                end_time=start + take,
-                text_overlay=text[:50] if text else None,
-            ))
-            remaining -= take
+            take = min(dur, remain)
+            segs.append(ClipSegment(source_file=src, start_time=start, end_time=start + take,
+                                    text_overlay=text[:80] if text else None))
+            remain -= take
 
-        return AiClipPlan(segments=segments, total_duration=input_data.target_duration - remaining)
+        return AiClipPlan(segments=segs, total_duration=input_data.target_duration - remain)
 
-    # ─── 执行 ───
+    # ═══════ TTS 配音 ═══════
+
+    async def generate_tts(self, text: str, job_id: str) -> Optional[str]:
+        """生成 TTS 音频，返回 mp3 文件路径"""
+        cfg = get_config()
+        if not cfg.tts_enabled or not text.strip():
+            return None
+
+        out_path = self.temp.get_temp_path(f"tts_{os.urandom(4).hex()}.mp3")
+
+        # 尝试 edge-tts（免费，无需 API Key）
+        try:
+            voice = cfg.tts_voice
+            proc = await asyncio.create_subprocess_exec(
+                "edge-tts", "--text", text, "--voice", voice,
+                "--write-media", out_path,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.wait()
+            if proc.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+                await self._log(job_id, "info", f"TTS 配音生成成功 (edge-tts, {voice})")
+                return out_path
+        except Exception:
+            pass
+
+        # 尝试火山引擎 TTS API
+        if cfg.tts_api_key and cfg.tts_api_base:
+            try:
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(
+                        cfg.tts_api_base,
+                        headers={
+                            "Authorization": f"Bearer {cfg.tts_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"text": text, "voice": cfg.tts_voice},
+                    )
+                    if resp.status_code == 200:
+                        audio_data = resp.content
+                        if len(audio_data) > 100:
+                            with open(out_path, "wb") as f:
+                                f.write(audio_data)
+                            await self._log(job_id, "info", "TTS 配音生成成功 (API)")
+                            return out_path
+            except Exception:
+                pass
+
+        await self._log(job_id, "warn", "TTS 配音生成失败，将不放配音")
+        return None
+
+    # ═══════ 执行渲染 (含 TTS + 字幕) ═══════
 
     async def execute(self, req: AiMixExecuteRequest, job_id: str) -> str:
-        """执行 AI 混剪渲染"""
-        tracker = create_tracker(job_id, total_steps=2)
+        tracker = create_tracker(job_id, total_steps=3)
         tracker.set_status(JobStatus.RENDERING)
 
         store = get_job_store()
-        store.put(JobRecord.create(
-            job_id=job_id, job_type="ai_mix",
-            input_summary=f"AI混剪: {len(req.clip_plan.segments)} 个片段",
-        ))
+        store.put(JobRecord.create(job_id=job_id, job_type="ai_mix",
+                                    input_summary=f"AI混剪: {len(req.clip_plan.segments)} 片段"))
 
         try:
-            # Step 1: 裁剪片段
             job_dir = self.temp.create_temp_dir(f"ai_mix_{job_id}")
-            clip_files = []
-            total = len(req.clip_plan.segments)
+            output = req.output_path
+            os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
 
-            for i, seg in enumerate(req.clip_plan.segments):
-                clip_path = os.path.join(job_dir, f"clip_{i:04d}.mp4")
-                clip_files.append(clip_path)
-
-                tracker.set_step(0, f"裁剪片段 {i+1}/{total}...")
+            # Step 1: TTS 配音
+            tts_path = None
+            if req.tts_enabled:
+                tracker.set_step(0, "正在生成 TTS 配音...")
                 await broadcast_progress(job_id, "progress", tracker.to_dict())
+                # 组合所有片段的 text_overlay 作为 TTS 文本
+                full_text = " ".join(s.text_overlay or "" for s in req.clip_plan.segments).strip()
+                if not full_text:
+                    full_text = "这是一个自动生成的混剪视频。"
+                tts_path = await self.generate_tts(full_text, job_id)
 
-                await self.executor.trim(
-                    seg.source_file, clip_path, seg.start_time, seg.end_time, job_id
-                )
+            # Step 2: 裁剪片段
+            tracker.set_step(1, "正在裁剪片段...")
+            await broadcast_progress(job_id, "progress", tracker.to_dict())
+
+            clip_files = []
+            for i, seg in enumerate(req.clip_plan.segments):
+                clip = os.path.join(job_dir, f"clip_{i:04d}.mp4")
+                clip_files.append(clip)
+                await self.executor.trim(seg.source_file, clip, seg.start_time, seg.end_time, job_id)
 
             valid_clips = [f for f in clip_files if os.path.exists(f) and os.path.getsize(f) > 0]
             if not valid_clips:
@@ -344,18 +357,69 @@ class AiMixService:
                 await broadcast_progress(job_id, "error", tracker.to_dict())
                 return job_id
 
-            # Step 2: 拼接
-            tracker.set_step(1, "正在拼接输出...")
+            # Step 3: 拼接 + 字幕烧录 + TTS 混音
+            tracker.set_step(2, "正在拼接输出...")
             await broadcast_progress(job_id, "progress", tracker.to_dict())
 
-            output = req.output_path
-            os.makedirs(os.path.dirname(output) if os.path.dirname(output) else ".", exist_ok=True)
+            cfg = get_config()
+            codec = cfg.hw_encoder or "libx264"
+
+            # 构建 FFmpeg 参数
+            args = []
+            for cf in valid_clips:
+                args.extend(["-i", cf])
+            if tts_path and os.path.exists(tts_path):
+                args.extend(["-i", tts_path])
+
+            # 视频 concat
+            filters = []
+            v_in = [f"[{i}:v]trim=0:99999,setpts=PTS-STARTPTS[v{i}]" for i in range(len(valid_clips))]
+            filters.extend(v_in)
+            v_labels = "".join(f"[v{i}]" for i in range(len(valid_clips)))
+            filters.append(f"{v_labels}concat=n={len(valid_clips)}:v=1:a=0[vout]")
+
+            # 字幕烧录（如果有 text_overlay）
+            if any(s.text_overlay for s in req.clip_plan.segments if s.text_overlay):
+                subtitle_texts = [s.text_overlay or "" for s in req.clip_plan.segments if s.text_overlay]
+                # 把每个片段对应的文字用 drawtext 压上去
+                filters.append(
+                    f"[vout]drawtext=text='{subtitle_texts[0][:60]}':"
+                    f"fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:"
+                    f"x=(w-text_w)/2:y=h-th-60:enable='between(0,3)'[vout_s]"
+                )
+                vout_label = "[vout_s]"
+            else:
+                vout_label = "[vout]"
+
+            # TTS 音频混入
+            if tts_path and os.path.exists(tts_path):
+                tts_idx = len(valid_clips)
+                filters.append(f"[{tts_idx}:a]volume=1.0,adelay=0:all=1[a1]")
+                a_out = "-map \"[a1]\""
+            else:
+                a_out = ""
+
+            filter_str = ";".join(filters)
+            args.extend(["-filter_complex", filter_str, "-map", vout_label])
+            if a_out:
+                parts = a_out.split()
+                for p in parts:
+                    args.append(p)
+
+            args.extend([
+                "-c:v", codec, "-preset", "medium", "-crf", "23",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+            ])
+            if not tts_path:
+                args.append("-an")
+            args.append(output)
 
             async def on_progress(ffprog):
                 tracker.on_ffmpeg_progress(ffprog)
                 await broadcast_progress(job_id, "progress", tracker.to_dict())
 
-            result = await self.executor.concat(valid_clips, output, job_id, progress_callback=on_progress)
+            result = await self.executor.run(args, job_id, progress_callback=on_progress)
 
             if result.returncode == 0:
                 tracker.set_output(output)
@@ -370,12 +434,16 @@ class AiMixService:
             tracker.set_error(str(e))
             self._update_job(store, job_id, JobStatus.FAILED, error=str(e))
             await broadcast_progress(job_id, "error", tracker.to_dict())
-
         finally:
             remove_tracker(job_id)
             self.temp.cleanup()
 
         return job_id
+
+    # ═══════ helpers ═══════
+
+    async def _log(self, job_id: str, level: str, message: str):
+        await broadcast_progress(job_id, "log", {"level": level, "message": message})
 
     def _update_job(self, store, job_id: str, status: JobStatus, output_path: str = "", error: str = ""):
         from datetime import datetime, timezone

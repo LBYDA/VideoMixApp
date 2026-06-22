@@ -52,6 +52,20 @@
           <label>输出目录</label>
           <input v-model="outputDir" class="path-input" placeholder="如 D:\输出" />
         </div>
+        <div class="param param-check">
+          <label>
+            <input type="checkbox" v-model="ttsEnabled" />
+            TTS 配音
+          </label>
+          <span class="check-hint">自动生成配音并混入视频</span>
+        </div>
+        <div class="param param-check">
+          <label>
+            <input type="checkbox" v-model="subtitleEnabled" />
+            字幕烧录
+          </label>
+          <span class="check-hint">将片段的文字叠在视频上</span>
+        </div>
       </div>
     </div>
 
@@ -119,6 +133,8 @@ const scanSummary = ref('')
 const targetDuration = ref(45)
 const style = ref('marketing')
 const outputDir = ref(settings.output_dir)
+const ttsEnabled = ref(false)
+const subtitleEnabled = ref(false)
 
 const isGenerating = ref(false)
 const isRunning = ref(false)
@@ -215,10 +231,10 @@ async function executePlan() {
     const { data } = await axios.post('/api/ai-mix/execute', {
       clip_plan: clipPlan.value,
       output_path: outputPath,
-      tts_enabled: false,
+      tts_enabled: ttsEnabled.value,
       tts_voice: 'zh-CN-XiaoxiaoNeural',
       tts_speed: 1.0,
-      subtitle_enabled: false,
+      subtitle_enabled: subtitleEnabled.value,
       subtitle_style: {},
       resolution_w: 1920,
       resolution_h: 1080,
@@ -330,6 +346,32 @@ function cancelMix() {
   color: var(--accent);
   margin-top: 4px;
   line-height: 1.3;
+}
+
+.param-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.param-check label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.param-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.check-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .actions {
