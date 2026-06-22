@@ -28,37 +28,13 @@ def get_bundled_resource_dir() -> Path:
 
 
 def get_or_extract_ffmpeg() -> tuple[Optional[str], Optional[str]]:
-    """获取bundled FFmpeg路径，打包模式下解压到临时目录"""
-    global _BUNDLED_FFMPEG_DIR
-    import stat
-
+    """获取bundled FFmpeg路径"""
     base = get_bundled_resource_dir()
     bundled_ffmpeg = base / "resources" / "ffmpeg" / "Windows" / "ffmpeg" / "bin" / "ffmpeg.exe"
     bundled_ffprobe = base / "resources" / "ffmpeg" / "Windows" / "ffmpeg" / "bin" / "ffprobe.exe"
 
     if bundled_ffmpeg.exists() and bundled_ffprobe.exists():
-        # 开发模式：直接使用
-        if not getattr(sys, 'frozen', False):
-            return str(bundled_ffmpeg), str(bundled_ffprobe)
-
-        # 打包模式：复制到临时目录（避免 _MEIPASS 只读问题）
-        if _BUNDLED_FFMPEG_DIR is None:
-            _BUNDLED_FFMPEG_DIR = tempfile.mkdtemp(prefix="vm_ffmpeg_")
-            dst_ffmpeg = os.path.join(_BUNDLED_FFMPEG_DIR, "ffmpeg.exe")
-            dst_ffprobe = os.path.join(_BUNDLED_FFMPEG_DIR, "ffprobe.exe")
-
-            if not os.path.exists(dst_ffmpeg):
-                shutil.copy2(str(bundled_ffmpeg), dst_ffmpeg)
-                os.chmod(dst_ffmpeg, os.stat(dst_ffmpeg).st_mode | stat.S_IEXEC)
-
-            if not os.path.exists(dst_ffprobe):
-                shutil.copy2(str(bundled_ffprobe), dst_ffprobe)
-                os.chmod(dst_ffprobe, os.stat(dst_ffprobe).st_mode | stat.S_IEXEC)
-
-        return (
-            os.path.join(_BUNDLED_FFMPEG_DIR, "ffmpeg.exe"),
-            os.path.join(_BUNDLED_FFMPEG_DIR, "ffprobe.exe"),
-        )
+        return str(bundled_ffmpeg), str(bundled_ffprobe)
 
     return None, None
 
@@ -79,6 +55,19 @@ class AppConfig(BaseModel):
     llm_api_key: str = ""
     llm_model: str = "gpt-4o"
     llm_max_tokens: int = 4096
+    llm_temperature: float = 0.7
+
+    # TTS 配置
+    tts_enabled: bool = False
+    tts_api_base: str = "https://openspeech.bytedance.com/api/v3/tts"
+    tts_api_key: str = ""
+    tts_voice: str = "zh-CN-XiaoxiaoNeural"
+
+    # 自定义 Prompt
+    custom_prompt_marketing: str = ""
+    custom_prompt_vlog: str = ""
+    custom_prompt_general: str = ""
+    custom_prompt_rewrite: str = ""
 
     # ASR 配置
     asr_engine: Literal["local", "api"] = "local"

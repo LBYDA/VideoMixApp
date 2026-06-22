@@ -17,7 +17,9 @@ async def update_settings(data: dict):
     # 只更新允许的字段
     allowed = {
         "ffmpeg_path", "ffprobe_path", "workspace_dir", "output_dir",
-        "llm_api_base", "llm_api_key", "llm_model", "llm_max_tokens",
+        "llm_api_base", "llm_api_key", "llm_model", "llm_max_tokens", "llm_temperature",
+        "tts_enabled", "tts_api_base", "tts_api_key", "tts_voice",
+        "custom_prompt_marketing", "custom_prompt_vlog", "custom_prompt_general", "custom_prompt_rewrite",
         "asr_engine", "asr_model_size", "asr_language",
         "scene_detection_enabled", "scene_model_path",
         "default_resolution_w", "default_resolution_h", "default_fps",

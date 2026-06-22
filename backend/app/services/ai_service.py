@@ -116,8 +116,18 @@ class AiMixService:
         # 构建文案表
         copy_table = self._build_copy_table(video_subtitles)
 
-        # 选取对应的 Prompt
-        system_prompt = MIX_PROMPTS.get(input_data.style, MIX_PROMPTS["general"])
+        # 选取对应的 Prompt（优先用户自定义）
+        cfg2 = get_config()
+        custom_key = f"custom_prompt_{input_data.style}"
+        custom = getattr(cfg2, custom_key, "")
+        if custom and custom.strip():
+            system_prompt = custom.strip()
+            await broadcast_progress(job_id, "log", {
+                "level": "info",
+                "message": "使用自定义 Prompt"
+            })
+        else:
+            system_prompt = MIX_PROMPTS.get(input_data.style, MIX_PROMPTS["general"])
 
         # 构建用户消息
         user_msg = (
