@@ -119,19 +119,27 @@ def main():
         except (ConnectionRefusedError, OSError):
             pass
 
-    # pywebview 原生窗口
-    try:
-        import webview
-        webview.create_window("视频混剪工具", f"http://127.0.0.1:{port}",
-                              width=1280, height=800, min_size=(900, 600))
-        webview.start()
-        os._exit(0)
-    except ImportError:
-        pass
+    # Edge --app 模式：独立窗口，无地址栏，像原生应用
+    import subprocess
+    url = f"http://127.0.0.1:{port}"
+    edge_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ]
+    edge = None
+    for p in edge_paths:
+        if os.path.exists(p):
+            edge = p
+            break
 
-    # 回退浏览器
-    import webbrowser
-    webbrowser.open(f"http://127.0.0.1:{port}")
+    if edge:
+        subprocess.Popen([edge, f"--app={url}", "--new-window",
+                          "--window-size=1280,800"],
+                         creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
     t.join()
 
 
