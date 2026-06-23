@@ -102,24 +102,6 @@ def _run_uvicorn(port: int):
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 
-def _find_edge() -> Optional[str]:
-    """查找 Edge 浏览器路径"""
-    import shutil
-    # 先查系统PATH
-    edge = shutil.which("msedge")
-    if edge:
-        return edge
-    # 常见安装位置
-    paths = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            return p
-    return None
-
-
 def main():
     port = 51234
 
@@ -137,22 +119,9 @@ def main():
         except (ConnectionRefusedError, OSError):
             pass
 
-    url = f"http://127.0.0.1:{port}"
-
-    # 尝试 Edge --app 独立窗口模式
-    import subprocess
-    edge = _find_edge()
-    if edge:
-        try:
-            subprocess.Popen([edge, f"--app={url}"],
-                             creationflags=0x08000000 if sys.platform == "win32" else 0)  # CREATE_NO_WINDOW
-        except Exception:
-            import webbrowser
-            webbrowser.open(url)
-    else:
-        import webbrowser
-        webbrowser.open(url)
-
+    import webbrowser
+    time.sleep(1)
+    webbrowser.open(f"http://127.0.0.1:{port}")
     t.join()
 
 
