@@ -119,8 +119,8 @@ def main():
         except (ConnectionRefusedError, OSError):
             pass
 
-    import webbrowser
     time.sleep(1)
+    import webbrowser
     webbrowser.open(f"http://127.0.0.1:{port}")
     t.join()
 
