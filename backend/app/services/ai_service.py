@@ -109,6 +109,12 @@ class AiMixService:
 
         await self._log(job_id, "info", f"模式: {MODE_LABELS.get(input_data.style, input_data.style)}")
 
+        # 没有 ASR 字幕数据时，LLM 无法分析，直接走回退方案
+        total_segments = sum(len(v.get("segments", [])) for v in video_subtitles)
+        if total_segments == 0:
+            await self._log(job_id, "info", "无 ASR 字幕数据（未安装 faster-whisper），使用本地回退方案")
+            return self._fallback_plan(input_data, video_subtitles)
+
         if not cfg.llm_api_key:
             await self._log(job_id, "info", "未配置 LLM API Key，使用本地备用方案")
             return self._fallback_plan(input_data, video_subtitles)
@@ -148,7 +154,6 @@ class AiMixService:
                     ],
                     "max_tokens": cfg.llm_max_tokens,
                     "temperature": cfg.llm_temperature,
-                    "response_format": {"type": "json_object"},  # 强制 JSON 输出
                 },
             )
 
@@ -160,6 +165,9 @@ class AiMixService:
             return data["choices"][0]["message"]["content"]
 
     def _parse_llm_response(self, content: str, video_subtitles: list[dict]) -> Optional[AiClipPlan]:
+        # 记录原始返回用于调试
+        print(f"[LLM Response] {content[:500]}")
+
         index_map: list[tuple[str, float, float]] = []
         for vid in video_subtitles:
             for seg in vid.get("segments", []):
@@ -239,6 +247,7 @@ class AiMixService:
         remain = input_data.target_duration
         all_subs = []
 
+        # 先从 ASR 字幕提取
         for vid in video_subtitles:
             for seg in vid.get("segments", []):
                 text = seg.get("text", "")
@@ -247,12 +256,19 @@ class AiMixService:
                     continue
                 all_subs.append((vid.get("file_path", ""), seg["start"], seg["end"], text, dur))
 
+        # 没有 ASR 字幕：直接从视频文件均匀切片
         if not all_subs:
-            for vid in video_subtitles:
-                for seg in vid.get("segments", []):
-                    dur = seg.get("duration", seg.get("end", 0) - seg.get("start", 0))
-                    if dur > 0.5:
-                        all_subs.append((vid.get("file_path", ""), seg["start"], seg["end"], seg.get("text", ""), dur))
+            all_files = [v.get("file_path", "") for v in video_subtitles if v.get("file_path")]
+            if all_files:
+                clip_dur = 4.0
+                num_per_file = max(1, int(remain / len(all_files) / clip_dur))
+                for fp in all_files:
+                    for i in range(num_per_file):
+                        start = i * (clip_dur + 0.5)
+                        dur = clip_dur
+                        if start + dur > 99999:
+                            break
+                        all_subs.append((fp, start, start + dur, "", dur))
 
         all_subs.sort(key=lambda x: x[4], reverse=True)
         for src, start, end, text, dur in all_subs:
