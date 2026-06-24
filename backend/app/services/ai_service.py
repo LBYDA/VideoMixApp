@@ -358,11 +358,13 @@ class AiMixService:
                 tts_path = await self.generate_tts(full_text, job_id)
 
             # Step 2: 裁剪片段
-            tracker.set_step(1, "正在裁剪片段...")
-            await broadcast_progress(job_id, "progress", tracker.to_dict())
-
+            total_clips = len(req.clip_plan.segments)
             clip_files = []
             for i, seg in enumerate(req.clip_plan.segments):
+                tracker.set_step(1, f"正在裁剪片段 {i+1}/{total_clips}...")
+                tracker.ffmpeg_percent = ((i + 1) / total_clips) * 100
+                await broadcast_progress(job_id, "progress", tracker.to_dict())
+
                 clip = os.path.join(job_dir, f"clip_{i:04d}.mp4")
                 clip_files.append(clip)
                 await self.executor.trim(seg.source_file, clip, seg.start_time, seg.end_time, job_id)
@@ -375,6 +377,7 @@ class AiMixService:
 
             # Step 3: 拼接 + 字幕烧录 + TTS 混音
             tracker.set_step(2, "正在拼接输出...")
+            tracker.ffmpeg_percent = 0.0
             await broadcast_progress(job_id, "progress", tracker.to_dict())
 
             cfg = get_config()
